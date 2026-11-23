@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bengu Editor</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14171c">
+<style>
+:root{--bg:#14171c;--panel:#1d2128;--line:#2c323c;--text:#eef0f3;--mute:#9aa3b0;--acc:#f2b632;--accText:#14171c}
+@media (prefers-color-scheme:light){:root{--bg:#f3f1ec;--panel:#fff;--line:#d9d5cb;--text:#1b1d21;--mute:#5d6470;--acc:#c98a00;--accText:#fff}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:16px/1.45 "Trebuchet MS",system-ui,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:720px;margin:0 auto;padding:14px}
+h1{font:700 22px Georgia,serif;margin:4px 0 12px}
+#stage{background:repeating-conic-gradient(#0003 0 25%,#fff1 0 50%) 0 0/20px 20px;border:1px solid var(--line);border-radius:6px;overflow:hidden;position:relative;min-height:160px}
+canvas{display:block;width:100%;height:auto}
+#empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:var(--mute);padding:20px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+button,.btn{background:var(--acc);color:var(--accText);border:0;border-radius:6px;padding:11px 16px;font:inherit;font-weight:700;cursor:pointer}
+button.alt{background:var(--panel);color:var(--text);border:1px solid var(--line)}
+button:disabled{opacity:.45}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+fieldset{background:var(--panel);border:1px solid var(--line);border-radius:6px;margin:12px 0;padding:10px 14px 14px}
+legend{font-weight:700;padding:0 6px}
+label{display:grid;grid-template-columns:110px 1fr 52px;gap:8px;align-items:center;margin:8px 0;color:var(--mute);font-size:14px}
+label output{text-align:right;color:var(--text)}
+input[type=range]{width:100%;accent-color:var(--acc)}
+input[type=text]{width:100%;padding:10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+input[type=color]{width:46px;height:36px;border:0;background:none;padding:0}
+#msg{color:var(--mute);font-size:14px;min-height:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>Bengu Editor</h1>
+
+<div id="stage">
+  <canvas id="cv" width="640" height="360"></canvas>
+  <div id="empty">Toque em “Importar vídeo” para começar.<br>Tudo é feito no seu aparelho, sem internet.</div>
+</div>
+<div id="msg"></div>
+
+<div class="row">
+  <label class="btn" for="file">Importar vídeo</label>
+  <input id="file" type="file" accept="video/*" hidden>
+  <button id="play" class="alt" disabled>Reproduzir</button>
+  <button id="export" disabled>Exportar vídeo</button>
+</div>
+
+<fieldset><legend>Cortar e velocidade</legend>
+  <label>Início<input id="ini" type="range" min="0" max="1" step="0.1" value="0"><output id="iniO">0s</output></label>
+  <label>Fim<input id="fim" type="range" min="0" max="1" step="0.1" value="1"><output id="fimO">0s</output></label>
+  <label>Velocidade<input id="vel" type="range" min="0.25" max="3" step="0.25" value="1"><output id="velO">1x</output></label>
+</fieldset>
+
+<fieldset><legend>Cor e imagem</legend>
+  <label>Brilho<input id="bri" type="range" min="0.2" max="2" step="0.05" value="1"><output></output></label>
+  <label>Contraste<input id="con" type="range" min="0.2" max="2" step="0.05" value="1"><output></output></label>
+  <label>Saturação<input id="sat" type="range" min="0" max="3" step="0.05" value="1"><output></output></label>
+  <label>Desfoque<input id="blu" type="range" min="0" max="10" step="0.5" value="0"><output></output></label>
+</fieldset>
+
+<fieldset><legend>Remover fundo (chroma key)</legend>
+  <div class="row" style="align-items:center">
+    <label style="display:flex;gap:8px"><input id="ck" type="checkbox"> Ativar</label>
+    <span style="color:var(--mute);font-size:14px">Cor a remover</span>
+    <input id="kc" type="color" value="#00ff00">
+    <span style="color:var(--mute);font-size:14px">Novo fundo</span>
+    <input id="bg" type="color" value="#14171c">
+  </div>
+  <p style="margin:0 0 6px;color:var(--mute);font-size:14px">Dica: toque na prévia para escolher a cor do fundo do vídeo.</p>
+  <label>Tolerância<input id="tol" type="range" min="10" max="200" step="1" value="80"><output></output></label>
+</fieldset>
+
+<fieldset><legend>Texto</legend>
+  <input id="txt" type="text" placeholder="Escreva um título ou legenda">
+  <div class="row"><span style="color:var(--mute);font-size:14px;align-self:center">Cor</span><input id="tc" type="color" value="#ffffff">
+  <label style="grid-template-columns:70px 1fr 40px;flex:1;margin:0">Tamanho<input id="ts" type="range" min="16" max="120" value="48"><output></output></label></div>
+</fieldset>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d',{willReadFrequently:true});
+const off=document.createElement('canvas'),octx=off.getContext('2d',{willReadFrequently:true});
+const vid=document.createElement('video');vid.playsInline=true;vid.preload='auto';
+let loaded=false,exporting=false;
+
+// mostrar valores ao lado dos controles
+document.querySelectorAll('input[type=range]').forEach(r=>{
+  const o=r.parentElement.querySelector('output');
+  const up=()=>{if(o&&!o.id)o.textContent=r.value};
+  r.addEventListener('input',up);up();
+});
+
+$('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  vid.src=URL.createObjectURL(f);
+  $('msg').textContent='Carregando…';
+};
+vid.onloadedmetadata=()=>{
+  const sc=Math.min(1,720/Math.max(vid.videoWidth,vid.videoHeight));
+  cv.width=off.width=Math.round(vid.videoWidth*sc);
+  cv.height=off.height=Math.round(vid.videoHeight*sc);
+  const d=vid.duration;
+  for(const id of ['ini','fim']){$(id).max=d;}
+  $('ini').value=0;$('fim').value=d;lim();
+  $('empty').style.display='none';
+  $('play').disabled=$('export').disabled=false;
+  loaded=true;vid.currentTime=0;
+  $('msg').textContent='Vídeo pronto: '+d.toFixed(1)+' segundos.';
+};
+function lim(){
+  let a=+$('ini').value,b=+$('fim').value;
+  if(a>=b){a=Math.max(0,b-0.1);$('ini').value=a}
+  $('iniO').textContent=a.toFixed(1)+'s';$('fimO').textContent=b.toFixed(1)+'s';
+}
+$('ini').oninput=()=>{lim();vid.currentTime=+$('ini').value};
+$('fim').oninput=()=>{lim();vid.currentTime=+$('fim').value};
+$('vel').oninput=()=>{vid.playbackRate=+$('vel').value;$('velO').textContent=$('vel').value+'x'};
+
+$('play').onclick=()=>{
+  if(vid.paused){
+    if(vid.currentTime<+$('ini').value||vid.currentTime>=+$('fim').value)vid.currentTime=+$('ini').value;
+    vid.playbackRate=+$('vel').value;vid.play();$('play').textContent='Pausar';
+  }else{vid.pause();$('play').textContent='Reproduzir'}
+};
+
+// escolher cor do fundo tocando na prévia
+cv.onclick=e=>{
+  if(!loaded)return;
+  const r=cv.getBoundingClientRect();
+  const x=Math.floor((e.clientX-r.left)*cv.width/r.width),y=Math.floor((e.clientY-r.top)*cv.height/r.height);
+  octx.filter='none';octx.drawImage(vid,0,0,off.width,off.height);
+  const p=octx.getImageData(x,y,1,1).data;
+  $('kc').value='#'+[p[0],p[1],p[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+  $('ck').checked=true;
+};
+
+function frame(){
+  if(loaded){
+    const w=cv.width,h=cv.height;
+    const f=`brightness(${$('bri').value}) contrast(${$('con').value}) saturate(${$('sat').value}) blur(${$('blu').value}px)`;
+    ctx.filter='none';ctx.clearRect(0,0,w,h);
+    if($('ck').checked){
+      ctx.fillStyle=$('bg').value;ctx.fillRect(0,0,w,h);
+      octx.filter=f;octx.clearRect(0,0,w,h);octx.drawImage(vid,0,0,w,h);octx.filter='none';
+      const img=octx.getImageData(0,0,w,h),d=img.data,k=$('kc').value;
+      const kr=parseInt(k.slice(1,3),16),kg=parseInt(k.slice(3,5),16),kb=parseInt(k.slice(5,7),16),t=+$('tol').value;
+      for(let i=0;i<d.length;i+=4){
+        const dist=Math.hypot(d[i]-kr,d[i+1]-kg,d[i+2]-kb);
+        if(dist<t)d[i+3]=0;
+        else if(dist<t*1.4)d[i+3]=255*(dist-t)/(t*0.4);
+      }
+      octx.putImageData(img,0,0);ctx.drawImage(off,0,0);
+    }else{
+      ctx.filter=f;ctx.drawImage(vid,0,0,w,h);ctx.filter='none';
+    }
+    const s=$('txt').value;
+    if(s){
+      const size=+$('ts').value*(w/640);
+      ctx.font=`bold ${size}px "Trebuchet MS",sans-serif`;ctx.textAlign='center';
+      ctx.lineWidth=size/8;ctx.strokeStyle='#000a';ctx.strokeText(s,w/2,h-size,w*0.9);
+      ctx.fillStyle=$('tc').value;ctx.fillText(s,w/2,h-size,w*0.9);
+    }
+    if(!vid.paused&&!exporting&&vid.currentTime>=+$('fim').value){vid.pause();$('play').textContent='Reproduzir'}
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+
+$('export').onclick=async()=>{
+  if(!loaded||exporting||!window.MediaRecorder){$('msg').textContent='Seu navegador não permite exportar. Use o Chrome.';return}
+  exporting=true;$('export').disabled=$('play').disabled=true;
+  const a=+$('ini').value,b=+$('fim').value;
+  vid.pause();vid.currentTime=a;await new Promise(r=>vid.onseeked=r);vid.onseeked=null;
+  const stream=cv.captureStream(30);
+  try{(vid.captureStream?vid.captureStream():vid.mozCaptureStream()).getAudioTracks().forEach(t=>stream.addTrack(t))}catch(e){}
+  const types=['video/mp4','video/webm;codecs=vp9,opus','video/webm'];
+  const mime=types.find(t=>MediaRecorder.isTypeSupported(t))||'';
+  const rec=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:5e6}:{});
+  const parts=[];rec.ondataavailable=e=>e.data.size&&parts.push(e.data);
+  rec.onstop=()=>{
+    const ext=(rec.mimeType||'').includes('mp4')?'mp4':'webm';
+    const url=URL.createObjectURL(new Blob(parts,{type:rec.mimeType}));
+    const l=document.createElement('a');l.href=url;l.download='bengu-video.'+ext;l.click();
+    exporting=false;$('export').disabled=$('play').disabled=false;
+    $('msg').textContent='Vídeo exportado: bengu-video.'+ext;
+  };
+  rec.start();vid.playbackRate=+$('vel').value;vid.play();
+  const tick=setInterval(()=>{
+    $('msg').textContent='Exportando… '+Math.min(100,Math.round((vid.currentTime-a)/(b-a)*100))+'%';
+    if(vid.currentTime>=b||vid.ended){clearInterval(tick);vid.pause();rec.stop()}
+  },200);
+};
+
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
